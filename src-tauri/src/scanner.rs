@@ -66,6 +66,27 @@ pub fn scan_directory(root: &str) -> Result<Vec<TreeNode>, String> {
     Ok(result)
 }
 
+pub fn count_markdown_files(root: &str) -> Result<usize, String> {
+    let root_path = Path::new(root);
+    if !root_path.is_dir() {
+        return Err(format!("Path is not a directory: {}", root));
+    }
+
+    let count = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path().is_file()
+                && e.path()
+                    .extension()
+                    .map(|ext| ext.eq_ignore_ascii_case("md"))
+                    .unwrap_or(false)
+        })
+        .count();
+
+    Ok(count)
+}
+
 fn insert_path(tree: &mut BTreeMap<String, IntermediateNode>, components: &[String], full_path: &str) {
     if components.is_empty() {
         return;

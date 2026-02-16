@@ -79,3 +79,28 @@ pub fn set_sidebar_width(app: tauri::AppHandle, width: f64) -> Result<(), String
     cfg.sidebar_width = width;
     config::save_config(&data_dir, &cfg)
 }
+
+#[tauri::command]
+pub fn set_dark_mode(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut cfg = config::load_config(&data_dir);
+    cfg.dark_mode = enabled;
+    config::save_config(&data_dir, &cfg)
+}
+
+#[tauri::command]
+pub fn rename_catalog(app: tauri::AppHandle, index: usize, new_name: String) -> Result<AppConfig, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut cfg = config::load_config(&data_dir);
+    if index >= cfg.catalogs.len() {
+        return Err(format!("Index {} out of range", index));
+    }
+    cfg.catalogs[index].name = new_name;
+    config::save_config(&data_dir, &cfg)?;
+    Ok(cfg)
+}
+
+#[tauri::command]
+pub fn count_markdown_files(root_path: String) -> Result<usize, String> {
+    scanner::count_markdown_files(&root_path)
+}

@@ -17,6 +17,9 @@ pub fn run() {
             commands::render_markdown,
             commands::set_last_selected,
             commands::set_sidebar_width,
+            commands::set_dark_mode,
+            commands::rename_catalog,
+            commands::count_markdown_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

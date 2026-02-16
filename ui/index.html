@@ -12,13 +12,20 @@
             <div id="catalog-section">
                 <div id="catalog-header">
                     <h2>Catalogs</h2>
-                    <button id="add-catalog-btn" title="Add catalog folder">+</button>
+                    <div id="catalog-header-actions">
+                        <button id="dark-mode-btn" title="Toggle dark mode">&#x263E;</button>
+                        <button id="add-catalog-btn" title="Add catalog folder">+</button>
+                    </div>
                 </div>
                 <ul id="catalog-list"></ul>
             </div>
             <div id="tree-section">
                 <div id="tree-header">
-                    <h2>Files</h2>
+                    <div id="tree-header-row">
+                        <h2>Files</h2>
+                        <button id="refresh-tree-btn" title="Refresh file tree">&#x21bb;</button>
+                    </div>
+                    <input type="text" id="tree-search" placeholder="Filter files..." autocomplete="off" />
                 </div>
                 <div id="tree-container"></div>
             </div>
@@ -26,7 +33,7 @@
         <div id="resizer"></div>
         <div id="content">
             <div id="content-header">
-                <span id="current-file-name"></span>
+                <span id="breadcrumb-path"></span>
             </div>
             <div id="markdown-body">
                 <div id="welcome-message">

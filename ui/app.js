@@ -6,6 +6,16 @@ const { invoke } = window.__TAURI__.core;
 let appConfig = null;
 let currentTree = null;
 let activeFileElement = null;
+let darkModeEnabled = false;
+let currentFilePath = null;
+const scrollPositions = new Map();
+
+// Keyboard navigation
+let keyboardFocusIndex = -1;
+let treeItems = [];
+
+// Search debounce
+let searchTimeout = null;
 
 // ============================================
 // Initialization
@@ -20,6 +30,10 @@ async function loadConfig() {
     try {
         appConfig = await invoke("get_config");
         applySidebarWidth(appConfig.sidebar_width);
+
+        darkModeEnabled = appConfig.dark_mode || false;
+        applyDarkMode(darkModeEnabled);
+
         renderCatalogList();
 
         if (
@@ -40,6 +54,41 @@ async function loadConfig() {
 // ============================================
 function setupEventListeners() {
     document.getElementById("add-catalog-btn").addEventListener("click", addCatalog);
+    document.getElementById("dark-mode-btn").addEventListener("click", toggleDarkMode);
+    document.getElementById("refresh-tree-btn").addEventListener("click", refreshTree);
+
+    document.getElementById("tree-search").addEventListener("input", (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => filterTree(e.target.value), 150);
+    });
+
+    document.addEventListener("keydown", handleKeyboardNavigation);
+}
+
+// ============================================
+// Dark Mode
+// ============================================
+function applyDarkMode(enabled) {
+    if (enabled) {
+        document.documentElement.classList.add("dark");
+    } else {
+        document.documentElement.classList.remove("dark");
+    }
+    const btn = document.getElementById("dark-mode-btn");
+    if (btn) {
+        btn.textContent = enabled ? "\u2600" : "\u263E";
+        btn.title = enabled ? "Switch to light mode" : "Switch to dark mode";
+    }
+}
+
+async function toggleDarkMode() {
+    darkModeEnabled = !darkModeEnabled;
+    applyDarkMode(darkModeEnabled);
+    try {
+        await invoke("set_dark_mode", { enabled: darkModeEnabled });
+    } catch (err) {
+        console.error("Failed to save dark mode preference:", err);
+    }
 }
 
 // ============================================
@@ -86,6 +135,12 @@ function renderCatalogList() {
     list.innerHTML = "";
 
     if (appConfig.catalogs.length === 0) {
+        list.innerHTML = `
+            <div id="empty-state">
+                <p>Add a folder to get started</p>
+                <button id="empty-state-btn" title="Add catalog folder">+</button>
+            </div>`;
+        document.getElementById("empty-state-btn").addEventListener("click", addCatalog);
         return;
     }
 
@@ -99,6 +154,10 @@ function renderCatalogList() {
         nameSpan.className = "catalog-name";
         nameSpan.textContent = catalog.name;
         nameSpan.title = catalog.path;
+        nameSpan.addEventListener("dblclick", (e) => {
+            e.stopPropagation();
+            startCatalogRename(index, nameSpan, catalog.name);
+        });
         li.appendChild(nameSpan);
 
         const removeBtn = document.createElement("button");
@@ -111,8 +170,83 @@ function renderCatalogList() {
         li.addEventListener("click", () => selectCatalog(index));
         list.appendChild(li);
     });
+
+    updateFileCounts();
 }
 
+// ============================================
+// Catalog Rename
+// ============================================
+function startCatalogRename(index, nameSpan, currentName) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "catalog-name-input";
+    input.value = currentName;
+
+    const parent = nameSpan.parentElement;
+    parent.replaceChild(input, nameSpan);
+    input.focus();
+    input.select();
+
+    let finished = false;
+    const finishRename = async (save) => {
+        if (finished) return;
+        finished = true;
+
+        if (save && input.value.trim() && input.value.trim() !== currentName) {
+            try {
+                appConfig = await invoke("rename_catalog", {
+                    index,
+                    newName: input.value.trim(),
+                });
+            } catch (err) {
+                console.error("Failed to rename catalog:", err);
+            }
+        }
+        renderCatalogList();
+    };
+
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            finishRename(true);
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            finishRename(false);
+        }
+    });
+
+    input.addEventListener("blur", () => finishRename(true));
+}
+
+// ============================================
+// File Count Badge
+// ============================================
+async function updateFileCounts() {
+    for (let i = 0; i < appConfig.catalogs.length; i++) {
+        const catalog = appConfig.catalogs[i];
+        try {
+            const count = await invoke("count_markdown_files", { rootPath: catalog.path });
+            const listItems = document.querySelectorAll("#catalog-list li");
+            if (listItems[i]) {
+                let badge = listItems[i].querySelector(".catalog-file-count");
+                if (!badge) {
+                    badge = document.createElement("span");
+                    badge.className = "catalog-file-count";
+                    const removeBtn = listItems[i].querySelector(".remove-btn");
+                    listItems[i].insertBefore(badge, removeBtn);
+                }
+                badge.textContent = count;
+            }
+        } catch {
+            // Directory might not exist; skip silently
+        }
+    }
+}
+
+// ============================================
+// Catalog Selection & Tree Scanning
+// ============================================
 async function selectCatalog(index) {
     if (index < 0 || index >= appConfig.catalogs.length) return;
 
@@ -126,8 +260,36 @@ async function selectCatalog(index) {
         renderTree(currentTree);
     } catch (err) {
         console.error("Failed to scan directory:", err);
+        const errStr = String(err);
+        if (errStr.includes("not a directory") || errStr.includes("No such file")) {
+            document.getElementById("tree-container").innerHTML = `
+                <div class="tree-warning">
+                    <p>This folder no longer exists or is inaccessible.</p>
+                    <p style="font-size:11px;word-break:break-all;margin-top:4px;">${escapeHtml(catalog.path)}</p>
+                    <button id="remove-missing-btn">Remove catalog</button>
+                </div>`;
+            document.getElementById("remove-missing-btn").addEventListener("click", () => {
+                removeCatalog(index, new Event("click"));
+            });
+        } else {
+            document.getElementById("tree-container").innerHTML =
+                '<p class="tree-warning">Failed to scan directory.</p>';
+        }
+    }
+}
+
+async function refreshTree() {
+    if (appConfig.last_selected === null || appConfig.last_selected === undefined) return;
+    const catalog = appConfig.catalogs[appConfig.last_selected];
+    if (!catalog) return;
+
+    try {
+        currentTree = await invoke("scan_directory", { rootPath: catalog.path });
+        renderTree(currentTree);
+    } catch (err) {
+        console.error("Failed to refresh tree:", err);
         document.getElementById("tree-container").innerHTML =
-            '<p class="tree-empty">Failed to scan directory.</p>';
+            '<div class="tree-warning"><p>Failed to refresh. Directory may have been removed.</p></div>';
     }
 }
 
@@ -135,6 +297,9 @@ async function selectCatalog(index) {
 // Directory Tree Rendering
 // ============================================
 function renderTree(nodes) {
+    const searchInput = document.getElementById("tree-search");
+    if (searchInput) searchInput.value = "";
+
     const container = document.getElementById("tree-container");
     container.innerHTML = "";
 
@@ -145,6 +310,7 @@ function renderTree(nodes) {
 
     const ul = buildTreeUl(nodes);
     container.appendChild(ul);
+    updateTreeItems();
 }
 
 function buildTreeUl(nodes) {
@@ -153,7 +319,7 @@ function buildTreeUl(nodes) {
     for (const node of nodes) {
         if (node.type === "directory") {
             const li = document.createElement("li");
-            li.className = "tree-folder open";
+            li.className = "tree-folder";
             li.textContent = node.name;
             li.addEventListener("click", (e) => {
                 e.stopPropagation();
@@ -185,36 +351,190 @@ function clearTree() {
 }
 
 // ============================================
+// Tree Search / Filter
+// ============================================
+function filterTree(query) {
+    const container = document.getElementById("tree-container");
+    const allFiles = container.querySelectorAll(".tree-file");
+    const allFolders = container.querySelectorAll(".tree-folder");
+
+    if (!query.trim()) {
+        allFiles.forEach(el => el.style.display = "");
+        allFolders.forEach(el => el.style.display = "");
+        updateTreeItems();
+        return;
+    }
+
+    const lowerQuery = query.toLowerCase();
+
+    allFiles.forEach(el => el.style.display = "none");
+    allFolders.forEach(el => el.style.display = "none");
+
+    allFiles.forEach(fileEl => {
+        const fileName = fileEl.textContent.toLowerCase();
+        if (fileName.includes(lowerQuery)) {
+            fileEl.style.display = "";
+            let parent = fileEl.parentElement;
+            while (parent && parent.id !== "tree-container") {
+                if (parent.tagName === "UL") {
+                    parent.style.display = "";
+                    const prevSibling = parent.previousElementSibling;
+                    if (prevSibling && prevSibling.classList.contains("tree-folder")) {
+                        prevSibling.style.display = "";
+                        prevSibling.classList.add("open");
+                    }
+                }
+                parent = parent.parentElement;
+            }
+        }
+    });
+
+    updateTreeItems();
+}
+
+// ============================================
+// Keyboard Navigation
+// ============================================
+function updateTreeItems() {
+    const container = document.getElementById("tree-container");
+    treeItems = Array.from(container.querySelectorAll(".tree-file, .tree-folder"))
+        .filter(el => el.style.display !== "none");
+    keyboardFocusIndex = -1;
+    clearKeyboardFocus();
+}
+
+function handleKeyboardNavigation(e) {
+    const activeEl = document.activeElement;
+    const isSearchFocused = activeEl && activeEl.id === "tree-search";
+
+    if (e.key === "Escape" && isSearchFocused) {
+        activeEl.value = "";
+        filterTree("");
+        activeEl.blur();
+        return;
+    }
+
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) return;
+    if (treeItems.length === 0) return;
+
+    const visibleItems = treeItems.filter(el => el.style.display !== "none");
+    if (visibleItems.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+        e.preventDefault();
+        keyboardFocusIndex = Math.min(keyboardFocusIndex + 1, visibleItems.length - 1);
+        setKeyboardFocus(visibleItems[keyboardFocusIndex]);
+    } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        keyboardFocusIndex = Math.max(keyboardFocusIndex - 1, 0);
+        setKeyboardFocus(visibleItems[keyboardFocusIndex]);
+    } else if (e.key === "Enter" && keyboardFocusIndex >= 0) {
+        e.preventDefault();
+        const focused = visibleItems[keyboardFocusIndex];
+        if (focused) focused.click();
+    } else if (e.key === "Escape") {
+        clearKeyboardFocus();
+    }
+}
+
+function setKeyboardFocus(element) {
+    clearKeyboardFocus();
+    if (element) {
+        element.classList.add("keyboard-focus");
+        element.scrollIntoView({ block: "nearest" });
+    }
+}
+
+function clearKeyboardFocus() {
+    document.querySelectorAll(".keyboard-focus").forEach(el => {
+        el.classList.remove("keyboard-focus");
+    });
+}
+
+// ============================================
 // Markdown Rendering
 // ============================================
 async function openMarkdownFile(filePath, element) {
+    // Save scroll position of current file
+    if (currentFilePath) {
+        const body = document.getElementById("markdown-body");
+        scrollPositions.set(currentFilePath, body.scrollTop);
+    }
+
     if (activeFileElement) {
         activeFileElement.classList.remove("active");
     }
     activeFileElement = element;
     element.classList.add("active");
+    currentFilePath = filePath;
 
-    const parts = filePath.replace(/\\/g, "/").split("/");
-    document.getElementById("current-file-name").textContent = parts[parts.length - 1];
+    updateBreadcrumb(filePath);
 
     try {
         const html = await invoke("render_markdown", { filePath });
-        document.getElementById("markdown-body").innerHTML = html;
+        const body = document.getElementById("markdown-body");
+        body.innerHTML = html;
+        body.classList.remove("fade-in");
+        void body.offsetWidth;
+        body.classList.add("fade-in");
+
+        // Restore scroll position if previously viewed
+        const savedScroll = scrollPositions.get(filePath);
+        if (savedScroll !== undefined) {
+            requestAnimationFrame(() => {
+                body.scrollTop = savedScroll;
+            });
+        }
     } catch (err) {
         console.error("Failed to render markdown:", err);
         document.getElementById("markdown-body").innerHTML =
-            '<p style="color:#e53935;">Failed to render file.</p>';
+            '<p style="color:var(--text-error);">Failed to render file.</p>';
     }
 }
 
 function clearContent() {
     document.getElementById("markdown-body").innerHTML =
         '<div id="welcome-message"><h1>MarkView</h1><p>Select a catalog and open a markdown file to begin.</p></div>';
-    document.getElementById("current-file-name").textContent = "";
+    document.getElementById("breadcrumb-path").innerHTML = "";
     if (activeFileElement) {
         activeFileElement.classList.remove("active");
         activeFileElement = null;
     }
+    currentFilePath = null;
+}
+
+// ============================================
+// Breadcrumb
+// ============================================
+function updateBreadcrumb(filePath) {
+    const breadcrumb = document.getElementById("breadcrumb-path");
+    breadcrumb.innerHTML = "";
+
+    let displayPath = filePath;
+    if (appConfig.last_selected !== null && appConfig.last_selected !== undefined) {
+        const catalog = appConfig.catalogs[appConfig.last_selected];
+        if (catalog) {
+            const catalogPath = catalog.path.replace(/\\/g, "/");
+            const normalizedFile = filePath.replace(/\\/g, "/");
+            if (normalizedFile.startsWith(catalogPath)) {
+                displayPath = catalog.name + normalizedFile.slice(catalogPath.length);
+            }
+        }
+    }
+
+    const parts = displayPath.replace(/\\/g, "/").split("/");
+    parts.forEach((part, i) => {
+        if (i > 0) {
+            const sep = document.createElement("span");
+            sep.className = "breadcrumb-separator";
+            sep.textContent = "/";
+            breadcrumb.appendChild(sep);
+        }
+        const seg = document.createElement("span");
+        seg.className = "breadcrumb-segment";
+        seg.textContent = part;
+        breadcrumb.appendChild(seg);
+    });
 }
 
 // ============================================
@@ -255,5 +575,18 @@ function setupResizer() {
 
 function applySidebarWidth(width) {
     const sidebar = document.getElementById("sidebar");
+    sidebar.style.transition = "width 0.3s ease";
     sidebar.style.width = Math.max(200, Math.min(500, width)) + "px";
+    setTimeout(() => {
+        sidebar.style.transition = "";
+    }, 300);
+}
+
+// ============================================
+// Utilities
+// ============================================
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
 }

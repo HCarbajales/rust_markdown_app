@@ -13,6 +13,8 @@ pub struct AppConfig {
     pub catalogs: Vec<CatalogEntry>,
     pub last_selected: Option<usize>,
     pub sidebar_width: f64,
+    #[serde(default)]
+    pub dark_mode: bool,
 }
 
 impl Default for AppConfig {
@@ -21,6 +23,7 @@ impl Default for AppConfig {
             catalogs: Vec::new(),
             last_selected: None,
             sidebar_width: 300.0,
+            dark_mode: false,
         }
     }
 }
