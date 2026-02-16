@@ -4,44 +4,38 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-This is the `rust_markdown_app` project - a Rust application for markdown processing/rendering.
+MarkView - A Rust + Tauri v2 desktop markdown file viewer application.
 
-## Rust Environment
+## Tech Stack
 
-- **Toolchain**: Use the system-installed Rust toolchain (rustup)
-- **Build**: `cargo build`
-- **Run**: `cargo run`
-- **Test**: `cargo test`
-- **Release build**: `cargo build --release`
+- **Backend**: Rust + Tauri v2
+- **Frontend**: Plain HTML/CSS/JS (no framework, no npm, no bundler)
+- **Key crates**: pulldown-cmark, walkdir, serde, serde_json, tauri-plugin-dialog
 
-### Working with Rust
-- Use `cargo` for all build, run, and dependency management tasks
-- Add dependencies to `Cargo.toml` under `[dependencies]`
-- Keep `Cargo.lock` committed to version control for reproducible builds
+## Build & Run
 
-## Development Guidelines
+- **Prerequisites**: `cargo install tauri-cli`
+- **Development**: `cargo tauri dev` (from project root)
+- **Production build**: `cargo tauri build`
+- **Rust source**: `src-tauri/src/`
+- **Frontend files**: `ui/` directory (`index.html`, `styles.css`, `app.js`)
 
-### Project Structure
-- Source code lives in `src/`
-- Entry point is `src/main.rs`
-- Library code (if any) lives in `src/lib.rs`
-- Tests can be inline (unit tests) or in a `tests/` directory (integration tests)
+## Project Structure
 
-### Code Style
-- Follow standard Rust conventions (`rustfmt` formatting)
-- Use `cargo clippy` for linting
-- Handle errors explicitly using `Result` and the `?` operator
+- `ui/index.html`, `ui/styles.css`, `ui/app.js` -- Frontend
+- `src-tauri/` -- Tauri/Rust backend
+  - `src/main.rs` -- Desktop entry point (calls lib::run())
+  - `src/lib.rs` -- Tauri Builder + command registration
+  - `src/commands.rs` -- All #[tauri::command] functions
+  - `src/config.rs` -- Config persistence (JSON in app data dir)
+  - `src/scanner.rs` -- Directory tree scanning with walkdir
+  - `src/markdown.rs` -- Markdown to HTML with pulldown-cmark
+  - `tauri.conf.json` -- Tauri configuration
+  - `capabilities/default.json` -- Security permissions
 
-### Data Handling
-- Be mindful of potential PII (Personally Identifiable Information)
-- Never commit sensitive data to the repository
-- Document data sources and processing steps
+## Code Style
 
-## Getting Started
-
-1. Ensure Rust is installed: `rustup --version`
-2. Build the project: `cargo build`
-3. Run the project: `cargo run`
-4. Run tests: `cargo test`
-
-[Add project-specific instructions here]
+- Follow standard Rust conventions (rustfmt, clippy)
+- Frontend: vanilla JS, no dependencies, no build step
+- Tauri commands use snake_case in Rust, camelCase in JS (auto-mapped by Tauri)
+- Handle errors as `Result<T, String>` for Tauri command compatibility

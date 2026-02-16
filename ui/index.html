@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarkView</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <div id="sidebar">
+            <div id="catalog-section">
+                <div id="catalog-header">
+                    <h2>Catalogs</h2>
+                    <button id="add-catalog-btn" title="Add catalog folder">+</button>
+                </div>
+                <ul id="catalog-list"></ul>
+            </div>
+            <div id="tree-section">
+                <div id="tree-header">
+                    <h2>Files</h2>
+                </div>
+                <div id="tree-container"></div>
+            </div>
+        </div>
+        <div id="resizer"></div>
+        <div id="content">
+            <div id="content-header">
+                <span id="current-file-name"></span>
+            </div>
+            <div id="markdown-body">
+                <div id="welcome-message">
+                    <h1>MarkView</h1>
+                    <p>Select a catalog and open a markdown file to begin.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

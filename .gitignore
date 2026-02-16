@@ -3,7 +3,11 @@
 
 # Rust build artifacts
 /target/
+/src-tauri/target/
 Cargo.lock.bak
+
+# Tauri generated files
+/src-tauri/gen/
 
 # Environment variables
 .env
