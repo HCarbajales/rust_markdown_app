@@ -49,7 +49,8 @@ pub fn render_markdown(file_path: &str) -> Result<String, String> {
     let parser = Parser::new_ext(&content, options);
 
     // Collect all events, injecting heading IDs for anchor link support
-    let mut events: Vec<Event> = Vec::new();
+    // Pre-allocate: ~1 event per 10 chars of markdown is a reasonable estimate
+    let mut events: Vec<Event> = Vec::with_capacity(content.len() / 10);
     let mut in_heading = false;
     let mut heading_text = String::new();
     let mut heading_start_idx = 0;

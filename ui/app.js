@@ -11,9 +11,13 @@ let currentFilePath = null;
 const scrollPositions = new Map();
 const MAX_SCROLL_ENTRIES = 50;
 
+// Markdown render cache — avoids re-invoking IPC for recently viewed files
+const renderCache = new Map();
+const MAX_CACHE_ENTRIES = 20;
+
 // Keyboard navigation
 let keyboardFocusIndex = -1;
-let treeItems = [];
+let treeItems = [];  // pre-filtered visible items — updated by updateTreeItems()
 
 // Search debounce
 let searchTimeout = null;
@@ -175,7 +179,8 @@ function renderCatalogList() {
         list.appendChild(li);
     });
 
-    updateFileCounts();
+    // Defer file count fetches to avoid blocking initial render
+    (window.requestIdleCallback || setTimeout)(() => updateFileCounts());
 }
 
 // Lightweight selection update — no full re-render
@@ -301,6 +306,9 @@ async function refreshTree() {
     if (appConfig.last_selected === null || appConfig.last_selected === undefined) return;
     const catalog = appConfig.catalogs[appConfig.last_selected];
     if (!catalog) return;
+
+    // Clear render cache so refreshed files get re-rendered
+    renderCache.clear();
 
     try {
         currentTree = await invoke("scan_directory", { rootPath: catalog.path });
@@ -439,20 +447,18 @@ function handleKeyboardNavigation(e) {
     if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) return;
     if (treeItems.length === 0) return;
 
-    const visibleItems = treeItems.filter(el => el.style.display !== "none");
-    if (visibleItems.length === 0) return;
-
+    // treeItems is already pre-filtered by updateTreeItems() — no per-keypress recomputation
     if (e.key === "ArrowDown") {
         e.preventDefault();
-        keyboardFocusIndex = Math.min(keyboardFocusIndex + 1, visibleItems.length - 1);
-        setKeyboardFocus(visibleItems[keyboardFocusIndex]);
+        keyboardFocusIndex = Math.min(keyboardFocusIndex + 1, treeItems.length - 1);
+        setKeyboardFocus(treeItems[keyboardFocusIndex]);
     } else if (e.key === "ArrowUp") {
         e.preventDefault();
         keyboardFocusIndex = Math.max(keyboardFocusIndex - 1, 0);
-        setKeyboardFocus(visibleItems[keyboardFocusIndex]);
+        setKeyboardFocus(treeItems[keyboardFocusIndex]);
     } else if (e.key === "Enter" && keyboardFocusIndex >= 0) {
         e.preventDefault();
-        const focused = visibleItems[keyboardFocusIndex];
+        const focused = treeItems[keyboardFocusIndex];
         if (focused) focused.click();
     } else if (e.key === "Escape") {
         clearKeyboardFocus();
@@ -490,7 +496,17 @@ async function openMarkdownFile(filePath, element) {
     updateBreadcrumb(filePath);
 
     try {
-        const html = await invoke("render_markdown", { filePath });
+        // Use cached HTML if available, otherwise fetch and cache
+        let html = renderCache.get(filePath);
+        if (!html) {
+            html = await invoke("render_markdown", { filePath });
+            renderCache.set(filePath, html);
+            // LRU eviction
+            if (renderCache.size > MAX_CACHE_ENTRIES) {
+                renderCache.delete(renderCache.keys().next().value);
+            }
+        }
+
         const body = document.getElementById("markdown-body");
         body.innerHTML = html;
 
@@ -571,7 +587,15 @@ async function openResolvedMarkdownFile(filePath, anchor) {
     const normalizedPath = filePath.replace(/\//g, "\\");
 
     try {
-        const html = await invoke("render_markdown", { filePath: normalizedPath });
+        // Use cached HTML if available
+        let html = renderCache.get(normalizedPath);
+        if (!html) {
+            html = await invoke("render_markdown", { filePath: normalizedPath });
+            renderCache.set(normalizedPath, html);
+            if (renderCache.size > MAX_CACHE_ENTRIES) {
+                renderCache.delete(renderCache.keys().next().value);
+            }
+        }
         saveScrollPosition();
 
         currentFilePath = normalizedPath;

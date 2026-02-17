@@ -131,6 +131,7 @@ html, body {
     max-height: 40%;
     overflow-y: auto;
     border-bottom: 1px solid var(--border-primary);
+    contain: layout style;
 }
 
 #catalog-header {
@@ -350,6 +351,7 @@ html, body {
 
 #tree-container {
     padding: 0 6px 6px;
+    contain: layout style;
 }
 
 #tree-container .tree-empty {
@@ -537,6 +539,7 @@ html.dark .tree-file::before {
     flex: 1;
     overflow-y: auto;
     padding: 24px 32px;
+    contain: layout style;
 }
 
 /* Markdown fade-in */

@@ -57,11 +57,11 @@ pub fn scan_directory(root: &str) -> Result<Vec<TreeNode>, String> {
         }
 
         found_any = true;
-        let full_path_str = path.to_string_lossy().to_string();
+        let full_path_str = path.to_string_lossy().into_owned();
         let relative = path.strip_prefix(root_path).map_err(|e| e.to_string())?;
         let components: Vec<String> = relative
             .components()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect();
 
         insert_path(&mut tree, &components, &full_path_str);
@@ -132,7 +132,7 @@ fn convert_tree(tree: &BTreeMap<String, IntermediateNode>, current_path: &Path) 
             let children = convert_tree(subtree, &dir_path);
             result.push(TreeNode::Directory {
                 name: name.clone(),
-                path: dir_path.to_string_lossy().to_string(),
+                path: dir_path.to_string_lossy().into_owned(),
                 children,
             });
         }
