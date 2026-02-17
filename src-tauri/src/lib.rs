@@ -3,10 +3,20 @@ mod config;
 mod markdown;
 mod scanner;
 
+use std::sync::Mutex;
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let data_dir = app.path().app_data_dir().expect("failed to resolve app data dir");
+            let cfg = config::load_config(&data_dir);
+            app.manage(Mutex::new(cfg));
+            app.manage(data_dir);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,

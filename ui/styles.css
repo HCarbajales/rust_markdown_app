@@ -38,8 +38,8 @@
     --welcome-title: #bbb;
     --welcome-text: #999;
 
-    --badge-bg: #e0e4e8;
-    --badge-text: #555;
+    --badge-bg: #d0d5db;
+    --badge-text: #444;
 }
 
 html.dark {
@@ -81,8 +81,8 @@ html.dark {
     --welcome-title: #555;
     --welcome-text: #707070;
 
-    --badge-bg: #3a3f44;
-    --badge-text: #b0b0b0;
+    --badge-bg: #444a52;
+    --badge-text: #d0d0d0;
 }
 
 /* ===== Reset ===== */
@@ -221,13 +221,17 @@ html, body {
 }
 
 .catalog-file-count {
-    font-size: 10px;
+    font-size: 11px;
+    font-weight: 600;
     color: var(--badge-text);
     background: var(--badge-bg);
-    padding: 1px 6px;
-    border-radius: 8px;
-    margin-left: 6px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
     flex-shrink: 0;
+    min-width: 20px;
+    text-align: center;
+    line-height: 1.4;
 }
 
 #catalog-list li .remove-btn {
@@ -395,16 +399,9 @@ html, body {
     transform: rotate(90deg);
 }
 
-/* Tree collapse animation */
-.tree-folder + ul {
-    overflow: hidden;
-    max-height: 5000px;
-    transition: max-height 0.25s ease-in;
-}
-
+/* Tree collapse — folders closed by default */
 .tree-folder:not(.open) + ul {
-    max-height: 0;
-    transition: max-height 0.2s ease-out;
+    display: none;
 }
 
 /* File nodes */

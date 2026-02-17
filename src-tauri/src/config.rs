@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogEntry {
@@ -28,19 +28,19 @@ impl Default for AppConfig {
     }
 }
 
-fn config_path(app_data_dir: &PathBuf) -> PathBuf {
+fn config_path(app_data_dir: &Path) -> std::path::PathBuf {
     app_data_dir.join("config.json")
 }
 
-pub fn load_config(app_data_dir: &PathBuf) -> AppConfig {
+pub fn load_config(app_data_dir: &Path) -> AppConfig {
     let path = config_path(app_data_dir);
-    match fs::read_to_string(&path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+    match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => AppConfig::default(),
     }
 }
 
-pub fn save_config(app_data_dir: &PathBuf, config: &AppConfig) -> Result<(), String> {
+pub fn save_config(app_data_dir: &Path, config: &AppConfig) -> Result<(), String> {
     fs::create_dir_all(app_data_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     fs::write(config_path(app_data_dir), json).map_err(|e| e.to_string())?;

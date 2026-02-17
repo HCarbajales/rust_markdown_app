@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -21,49 +21,57 @@ enum IntermediateNode {
     File(String),
 }
 
+/// Skip hidden directories and common non-content directories
+fn is_scannable(entry: &DirEntry) -> bool {
+    let name = entry.file_name().to_str().unwrap_or("");
+    if entry.file_type().is_dir() {
+        return !name.starts_with('.') && name != "node_modules" && name != "target";
+    }
+    true
+}
+
 pub fn scan_directory(root: &str) -> Result<Vec<TreeNode>, String> {
     let root_path = Path::new(root);
     if !root_path.is_dir() {
         return Err(format!("Path is not a directory: {}", root));
     }
 
-    // Phase 1: Collect all .md file paths
-    let mut md_files: Vec<String> = Vec::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext.eq_ignore_ascii_case("md") {
-                    md_files.push(path.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    if md_files.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Phase 2: Build an intermediate tree using BTreeMap for sorting
     let mut tree: BTreeMap<String, IntermediateNode> = BTreeMap::new();
+    let mut found_any = false;
 
-    for file_path in &md_files {
-        let full = Path::new(file_path);
-        let relative = full
-            .strip_prefix(root_path)
-            .map_err(|e| e.to_string())?;
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(is_scannable)
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let ext_match = path
+            .extension()
+            .map(|ext| ext.eq_ignore_ascii_case("md"))
+            .unwrap_or(false);
+        if !ext_match {
+            continue;
+        }
 
+        found_any = true;
+        let full_path_str = path.to_string_lossy().to_string();
+        let relative = path.strip_prefix(root_path).map_err(|e| e.to_string())?;
         let components: Vec<String> = relative
             .components()
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .collect();
 
-        insert_path(&mut tree, &components, file_path);
+        insert_path(&mut tree, &components, &full_path_str);
     }
 
-    // Phase 3: Convert intermediate tree to TreeNode vec
-    let result = convert_tree(&tree, root_path);
-    Ok(result)
+    if !found_any {
+        return Ok(Vec::new());
+    }
+
+    Ok(convert_tree(&tree, root_path))
 }
 
 pub fn count_markdown_files(root: &str) -> Result<usize, String> {
@@ -74,9 +82,10 @@ pub fn count_markdown_files(root: &str) -> Result<usize, String> {
 
     let count = WalkDir::new(root)
         .into_iter()
+        .filter_entry(is_scannable)
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.path().is_file()
+            e.file_type().is_file()
                 && e.path()
                     .extension()
                     .map(|ext| ext.eq_ignore_ascii_case("md"))
@@ -87,19 +96,21 @@ pub fn count_markdown_files(root: &str) -> Result<usize, String> {
     Ok(count)
 }
 
-fn insert_path(tree: &mut BTreeMap<String, IntermediateNode>, components: &[String], full_path: &str) {
+fn insert_path(
+    tree: &mut BTreeMap<String, IntermediateNode>,
+    components: &[String],
+    full_path: &str,
+) {
     if components.is_empty() {
         return;
     }
 
     if components.len() == 1 {
-        // This is a file
         tree.insert(
             components[0].clone(),
             IntermediateNode::File(full_path.to_string()),
         );
     } else {
-        // This is a directory component
         let dir_name = &components[0];
         let entry = tree
             .entry(dir_name.clone())
@@ -112,30 +123,30 @@ fn insert_path(tree: &mut BTreeMap<String, IntermediateNode>, components: &[Stri
 }
 
 fn convert_tree(tree: &BTreeMap<String, IntermediateNode>, current_path: &Path) -> Vec<TreeNode> {
-    let mut dirs: Vec<TreeNode> = Vec::new();
-    let mut files: Vec<TreeNode> = Vec::new();
+    let mut result = Vec::with_capacity(tree.len());
 
+    // Directories first
     for (name, node) in tree {
-        match node {
-            IntermediateNode::Dir(subtree) => {
-                let dir_path = current_path.join(name);
-                let children = convert_tree(subtree, &dir_path);
-                dirs.push(TreeNode::Directory {
-                    name: name.clone(),
-                    path: dir_path.to_string_lossy().to_string(),
-                    children,
-                });
-            }
-            IntermediateNode::File(full_path) => {
-                files.push(TreeNode::File {
-                    name: name.clone(),
-                    path: full_path.clone(),
-                });
-            }
+        if let IntermediateNode::Dir(subtree) = node {
+            let dir_path = current_path.join(name);
+            let children = convert_tree(subtree, &dir_path);
+            result.push(TreeNode::Directory {
+                name: name.clone(),
+                path: dir_path.to_string_lossy().to_string(),
+                children,
+            });
         }
     }
 
-    // Directories first, then files (both already sorted by BTreeMap)
-    dirs.extend(files);
-    dirs
+    // Then files
+    for (name, node) in tree {
+        if let IntermediateNode::File(full_path) = node {
+            result.push(TreeNode::File {
+                name: name.clone(),
+                path: full_path.clone(),
+            });
+        }
+    }
+
+    result
 }

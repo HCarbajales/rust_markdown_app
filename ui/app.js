@@ -9,6 +9,7 @@ let activeFileElement = null;
 let darkModeEnabled = false;
 let currentFilePath = null;
 const scrollPositions = new Map();
+const MAX_SCROLL_ENTRIES = 50;
 
 // Keyboard navigation
 let keyboardFocusIndex = -1;
@@ -63,6 +64,9 @@ function setupEventListeners() {
     });
 
     document.addEventListener("keydown", handleKeyboardNavigation);
+
+    // Single delegated click listener for markdown links (avoids listener stacking)
+    document.getElementById("markdown-body").addEventListener("click", handleMarkdownClick);
 }
 
 // ============================================
@@ -132,7 +136,7 @@ async function removeCatalog(index, event) {
 
 function renderCatalogList() {
     const list = document.getElementById("catalog-list");
-    list.innerHTML = "";
+    list.replaceChildren();
 
     if (appConfig.catalogs.length === 0) {
         list.innerHTML = `
@@ -172,6 +176,14 @@ function renderCatalogList() {
     });
 
     updateFileCounts();
+}
+
+// Lightweight selection update — no full re-render
+function updateCatalogSelection(index) {
+    const items = document.querySelectorAll("#catalog-list li");
+    items.forEach((li, i) => {
+        li.classList.toggle("active", i === index);
+    });
 }
 
 // ============================================
@@ -220,27 +232,32 @@ function startCatalogRename(index, nameSpan, currentName) {
 }
 
 // ============================================
-// File Count Badge
+// File Count Badge (parallel requests)
 // ============================================
 async function updateFileCounts() {
-    for (let i = 0; i < appConfig.catalogs.length; i++) {
-        const catalog = appConfig.catalogs[i];
-        try {
-            const count = await invoke("count_markdown_files", { rootPath: catalog.path });
-            const listItems = document.querySelectorAll("#catalog-list li");
-            if (listItems[i]) {
-                let badge = listItems[i].querySelector(".catalog-file-count");
-                if (!badge) {
-                    badge = document.createElement("span");
-                    badge.className = "catalog-file-count";
-                    const removeBtn = listItems[i].querySelector(".remove-btn");
-                    listItems[i].insertBefore(badge, removeBtn);
-                }
-                badge.textContent = count;
-            }
-        } catch {
-            // Directory might not exist; skip silently
+    const listItems = document.querySelectorAll("#catalog-list li");
+
+    const promises = appConfig.catalogs.map((catalog, i) =>
+        invoke("count_markdown_files", { rootPath: catalog.path })
+            .then(count => ({ i, count }))
+            .catch(err => {
+                console.warn(`File count failed for "${catalog.name}":`, err);
+                return null;
+            })
+    );
+
+    const results = await Promise.all(promises);
+
+    for (const result of results) {
+        if (!result || !listItems[result.i]) continue;
+        let badge = listItems[result.i].querySelector(".catalog-file-count");
+        if (!badge) {
+            badge = document.createElement("span");
+            badge.className = "catalog-file-count";
+            const removeBtn = listItems[result.i].querySelector(".remove-btn");
+            listItems[result.i].insertBefore(badge, removeBtn);
         }
+        badge.textContent = result.count;
     }
 }
 
@@ -252,7 +269,9 @@ async function selectCatalog(index) {
 
     appConfig.last_selected = index;
     await invoke("set_last_selected", { index });
-    renderCatalogList();
+
+    // Lightweight update — just toggle .active class, no full rebuild
+    updateCatalogSelection(index);
 
     const catalog = appConfig.catalogs[index];
     try {
@@ -301,7 +320,7 @@ function renderTree(nodes) {
     if (searchInput) searchInput.value = "";
 
     const container = document.getElementById("tree-container");
-    container.innerHTML = "";
+    container.replaceChildren();
 
     if (!nodes || nodes.length === 0) {
         container.innerHTML = '<p class="tree-empty">No markdown files found.</p>';
@@ -315,6 +334,7 @@ function renderTree(nodes) {
 
 function buildTreeUl(nodes) {
     const ul = document.createElement("ul");
+    const fragment = document.createDocumentFragment();
 
     for (const node of nodes) {
         if (node.type === "directory") {
@@ -325,10 +345,10 @@ function buildTreeUl(nodes) {
                 e.stopPropagation();
                 li.classList.toggle("open");
             });
-            ul.appendChild(li);
+            fragment.appendChild(li);
 
             const childUl = buildTreeUl(node.children);
-            ul.appendChild(childUl);
+            fragment.appendChild(childUl);
         } else if (node.type === "file") {
             const li = document.createElement("li");
             li.className = "tree-file";
@@ -338,15 +358,16 @@ function buildTreeUl(nodes) {
                 e.stopPropagation();
                 openMarkdownFile(node.path, li);
             });
-            ul.appendChild(li);
+            fragment.appendChild(li);
         }
     }
 
+    ul.appendChild(fragment);
     return ul;
 }
 
 function clearTree() {
-    document.getElementById("tree-container").innerHTML = "";
+    document.getElementById("tree-container").replaceChildren();
     currentTree = null;
     activeFileElement = null;
 }
@@ -457,10 +478,7 @@ function clearKeyboardFocus() {
 // ============================================
 async function openMarkdownFile(filePath, element) {
     // Save scroll position of current file
-    if (currentFilePath) {
-        const body = document.getElementById("markdown-body");
-        scrollPositions.set(currentFilePath, body.scrollTop);
-    }
+    saveScrollPosition();
 
     if (activeFileElement) {
         activeFileElement.classList.remove("active");
@@ -475,12 +493,14 @@ async function openMarkdownFile(filePath, element) {
         const html = await invoke("render_markdown", { filePath });
         const body = document.getElementById("markdown-body");
         body.innerHTML = html;
-        body.classList.remove("fade-in");
-        void body.offsetWidth;
-        body.classList.add("fade-in");
 
-        // Intercept link clicks in rendered markdown
-        setupMarkdownLinks(body, filePath);
+        // Trigger fade-in via double-rAF (avoids forced reflow)
+        body.classList.remove("fade-in");
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                body.classList.add("fade-in");
+            });
+        });
 
         // Restore scroll position if previously viewed
         const savedScroll = scrollPositions.get(filePath);
@@ -496,44 +516,42 @@ async function openMarkdownFile(filePath, element) {
     }
 }
 
-function setupMarkdownLinks(container, currentFile) {
-    container.addEventListener("click", (e) => {
-        const link = e.target.closest("a");
-        if (!link) return;
+// Single delegated handler for all markdown link clicks
+function handleMarkdownClick(e) {
+    const link = e.target.closest("a");
+    if (!link) return;
 
-        const href = link.getAttribute("href");
-        if (!href) return;
+    const href = link.getAttribute("href");
+    if (!href) return;
 
-        e.preventDefault();
+    e.preventDefault();
 
-        // Anchor link — scroll to heading within current document
-        if (href.startsWith("#")) {
-            const targetId = href.slice(1);
-            const target = container.querySelector(`[id="${CSS.escape(targetId)}"]`);
-            if (target) {
-                target.scrollIntoView({ behavior: "smooth", block: "start" });
-            }
-            return;
+    // Anchor link — scroll to heading within current document
+    if (href.startsWith("#")) {
+        const targetId = href.slice(1);
+        const container = document.getElementById("markdown-body");
+        const target = container.querySelector(`[id="${CSS.escape(targetId)}"]`);
+        if (target) {
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
         }
+        return;
+    }
 
-        // Relative .md link — resolve and open
-        if (href.endsWith(".md") || href.includes(".md#")) {
-            const [mdPath, anchor] = href.split("#");
-            const currentDir = currentFile.replace(/\\/g, "/").replace(/\/[^/]*$/, "");
-            const resolved = resolveRelativePath(currentDir, mdPath.replace(/\\/g, "/"));
+    // Relative .md link — resolve and open
+    if (currentFilePath && (href.endsWith(".md") || href.includes(".md#"))) {
+        const [mdPath, anchor] = href.split("#");
+        const currentDir = currentFilePath.replace(/\\/g, "/").replace(/\/[^/]*$/, "");
+        const resolved = resolveRelativePath(currentDir, mdPath.replace(/\\/g, "/"));
+        openResolvedMarkdownFile(resolved, anchor);
+        return;
+    }
 
-            // Find the file in the tree and open it
-            openResolvedMarkdownFile(resolved, anchor);
-            return;
-        }
-
-        // External link — ignore (let default behavior handle or do nothing in Tauri)
-    });
+    // External link — do nothing in Tauri webview
 }
 
 function resolveRelativePath(base, relative) {
-    if (relative.match(/^[a-zA-Z]:\//)) return relative; // absolute Windows path
-    if (relative.startsWith("/")) return relative; // absolute Unix path
+    if (relative.match(/^[a-zA-Z]:\//)) return relative;
+    if (relative.startsWith("/")) return relative;
 
     const parts = base.split("/");
     const relParts = relative.split("/");
@@ -550,16 +568,11 @@ function resolveRelativePath(base, relative) {
 }
 
 async function openResolvedMarkdownFile(filePath, anchor) {
-    // Normalize to OS-native separators for the backend
     const normalizedPath = filePath.replace(/\//g, "\\");
 
     try {
         const html = await invoke("render_markdown", { filePath: normalizedPath });
-        // Save scroll position of current file
-        if (currentFilePath) {
-            const body = document.getElementById("markdown-body");
-            scrollPositions.set(currentFilePath, body.scrollTop);
-        }
+        saveScrollPosition();
 
         currentFilePath = normalizedPath;
         updateBreadcrumb(normalizedPath);
@@ -581,11 +594,13 @@ async function openResolvedMarkdownFile(filePath, anchor) {
 
         const body = document.getElementById("markdown-body");
         body.innerHTML = html;
-        body.classList.remove("fade-in");
-        void body.offsetWidth;
-        body.classList.add("fade-in");
 
-        setupMarkdownLinks(body, normalizedPath);
+        body.classList.remove("fade-in");
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                body.classList.add("fade-in");
+            });
+        });
 
         // Scroll to anchor if present
         if (anchor) {
@@ -600,6 +615,19 @@ async function openResolvedMarkdownFile(filePath, anchor) {
         console.error("Failed to open linked markdown file:", err);
         document.getElementById("markdown-body").innerHTML =
             `<p style="color:var(--text-error);">Could not open linked file: ${escapeHtml(filePath)}</p>`;
+    }
+}
+
+function saveScrollPosition() {
+    if (currentFilePath) {
+        const body = document.getElementById("markdown-body");
+        scrollPositions.set(currentFilePath, body.scrollTop);
+
+        // LRU eviction — keep map bounded
+        if (scrollPositions.size > MAX_SCROLL_ENTRIES) {
+            const oldest = scrollPositions.keys().next().value;
+            scrollPositions.delete(oldest);
+        }
     }
 }
 
@@ -619,7 +647,7 @@ function clearContent() {
 // ============================================
 function updateBreadcrumb(filePath) {
     const breadcrumb = document.getElementById("breadcrumb-path");
-    breadcrumb.innerHTML = "";
+    breadcrumb.replaceChildren();
 
     let displayPath = filePath;
     if (appConfig.last_selected !== null && appConfig.last_selected !== undefined) {
@@ -655,6 +683,7 @@ function setupResizer() {
     const resizer = document.getElementById("resizer");
     const sidebar = document.getElementById("sidebar");
     let isResizing = false;
+    let rafPending = false;
 
     resizer.addEventListener("mousedown", (e) => {
         isResizing = true;
@@ -664,9 +693,13 @@ function setupResizer() {
     });
 
     document.addEventListener("mousemove", (e) => {
-        if (!isResizing) return;
-        const newWidth = Math.max(200, Math.min(500, e.clientX));
-        sidebar.style.width = newWidth + "px";
+        if (!isResizing || rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+            const newWidth = Math.max(200, Math.min(500, e.clientX));
+            sidebar.style.width = newWidth + "px";
+            rafPending = false;
+        });
     });
 
     document.addEventListener("mouseup", async () => {
@@ -697,7 +730,9 @@ function applySidebarWidth(width) {
 // Utilities
 // ============================================
 function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
 }
