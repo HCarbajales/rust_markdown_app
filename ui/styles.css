@@ -37,6 +37,9 @@
     --scrollbar-thumb-hover: #a8a8a8;
     --welcome-title: #bbb;
     --welcome-text: #999;
+
+    --badge-bg: #e0e4e8;
+    --badge-text: #555;
 }
 
 html.dark {
@@ -77,6 +80,9 @@ html.dark {
     --scrollbar-thumb-hover: #666;
     --welcome-title: #555;
     --welcome-text: #707070;
+
+    --badge-bg: #3a3f44;
+    --badge-text: #b0b0b0;
 }
 
 /* ===== Reset ===== */
@@ -215,8 +221,11 @@ html, body {
 }
 
 .catalog-file-count {
-    font-size: 11px;
-    color: var(--text-dimmed);
+    font-size: 10px;
+    color: var(--badge-text);
+    background: var(--badge-bg);
+    padding: 1px 6px;
+    border-radius: 8px;
     margin-left: 6px;
     flex-shrink: 0;
 }

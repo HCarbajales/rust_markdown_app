@@ -333,6 +333,7 @@ function buildTreeUl(nodes) {
             const li = document.createElement("li");
             li.className = "tree-file";
             li.textContent = node.name;
+            li._filePath = node.path;
             li.addEventListener("click", (e) => {
                 e.stopPropagation();
                 openMarkdownFile(node.path, li);
@@ -478,6 +479,9 @@ async function openMarkdownFile(filePath, element) {
         void body.offsetWidth;
         body.classList.add("fade-in");
 
+        // Intercept link clicks in rendered markdown
+        setupMarkdownLinks(body, filePath);
+
         // Restore scroll position if previously viewed
         const savedScroll = scrollPositions.get(filePath);
         if (savedScroll !== undefined) {
@@ -489,6 +493,113 @@ async function openMarkdownFile(filePath, element) {
         console.error("Failed to render markdown:", err);
         document.getElementById("markdown-body").innerHTML =
             '<p style="color:var(--text-error);">Failed to render file.</p>';
+    }
+}
+
+function setupMarkdownLinks(container, currentFile) {
+    container.addEventListener("click", (e) => {
+        const link = e.target.closest("a");
+        if (!link) return;
+
+        const href = link.getAttribute("href");
+        if (!href) return;
+
+        e.preventDefault();
+
+        // Anchor link — scroll to heading within current document
+        if (href.startsWith("#")) {
+            const targetId = href.slice(1);
+            const target = container.querySelector(`[id="${CSS.escape(targetId)}"]`);
+            if (target) {
+                target.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+            return;
+        }
+
+        // Relative .md link — resolve and open
+        if (href.endsWith(".md") || href.includes(".md#")) {
+            const [mdPath, anchor] = href.split("#");
+            const currentDir = currentFile.replace(/\\/g, "/").replace(/\/[^/]*$/, "");
+            const resolved = resolveRelativePath(currentDir, mdPath.replace(/\\/g, "/"));
+
+            // Find the file in the tree and open it
+            openResolvedMarkdownFile(resolved, anchor);
+            return;
+        }
+
+        // External link — ignore (let default behavior handle or do nothing in Tauri)
+    });
+}
+
+function resolveRelativePath(base, relative) {
+    if (relative.match(/^[a-zA-Z]:\//)) return relative; // absolute Windows path
+    if (relative.startsWith("/")) return relative; // absolute Unix path
+
+    const parts = base.split("/");
+    const relParts = relative.split("/");
+
+    for (const part of relParts) {
+        if (part === "..") {
+            parts.pop();
+        } else if (part !== ".") {
+            parts.push(part);
+        }
+    }
+
+    return parts.join("/");
+}
+
+async function openResolvedMarkdownFile(filePath, anchor) {
+    // Normalize to OS-native separators for the backend
+    const normalizedPath = filePath.replace(/\//g, "\\");
+
+    try {
+        const html = await invoke("render_markdown", { filePath: normalizedPath });
+        // Save scroll position of current file
+        if (currentFilePath) {
+            const body = document.getElementById("markdown-body");
+            scrollPositions.set(currentFilePath, body.scrollTop);
+        }
+
+        currentFilePath = normalizedPath;
+        updateBreadcrumb(normalizedPath);
+
+        // Highlight matching tree item if visible
+        if (activeFileElement) {
+            activeFileElement.classList.remove("active");
+            activeFileElement = null;
+        }
+        const treeFiles = document.querySelectorAll(".tree-file");
+        for (const el of treeFiles) {
+            if (el._filePath === normalizedPath) {
+                el.classList.add("active");
+                activeFileElement = el;
+                el.scrollIntoView({ block: "nearest" });
+                break;
+            }
+        }
+
+        const body = document.getElementById("markdown-body");
+        body.innerHTML = html;
+        body.classList.remove("fade-in");
+        void body.offsetWidth;
+        body.classList.add("fade-in");
+
+        setupMarkdownLinks(body, normalizedPath);
+
+        // Scroll to anchor if present
+        if (anchor) {
+            requestAnimationFrame(() => {
+                const target = body.querySelector(`[id="${CSS.escape(anchor)}"]`);
+                if (target) {
+                    target.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+            });
+        }
+    } catch (err) {
+        console.error("Failed to open linked markdown file:", err);
+        document.getElementById("markdown-body").innerHTML =
+            `<p style="color:var(--text-error);">Could not open linked file: ${escapeHtml(filePath)}</p>`;
     }
 }
 
