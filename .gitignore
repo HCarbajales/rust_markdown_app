@@ -1,5 +1,7 @@
 # Claude Code configuration (project-specific, not shared)
 .claude/
+CLAUDE.md
+.mcp.json
 
 # Rust build artifacts
 /target/
